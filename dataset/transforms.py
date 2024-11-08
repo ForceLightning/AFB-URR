@@ -1,21 +1,22 @@
 import math
-import warnings
 import random
-import numbers
-import numpy as np
-from PIL import Image
+import warnings
 from collections.abc import Sequence
+from typing import Literal
 
+import numpy as np
 import torch
 import torchvision.transforms.functional as TF
+from PIL import Image
+from PIL.Image import Resampling
 
 _pil_interpolation_to_str = {
-    Image.NEAREST: 'PIL.Image.NEAREST',
-    Image.BILINEAR: 'PIL.Image.BILINEAR',
-    Image.BICUBIC: 'PIL.Image.BICUBIC',
-    Image.LANCZOS: 'PIL.Image.LANCZOS',
-    Image.HAMMING: 'PIL.Image.HAMMING',
-    Image.BOX: 'PIL.Image.BOX',
+    Resampling.NEAREST: "PIL.Image.NEAREST",
+    Resampling.BILINEAR: "PIL.Image.BILINEAR",
+    Resampling.BICUBIC: "PIL.Image.BICUBIC",
+    Resampling.LANCZOS: "PIL.Image.LANCZOS",
+    Resampling.HAMMING: "PIL.Image.HAMMING",
+    Resampling.BOX: "PIL.Image.BOX",
 }
 
 
@@ -38,7 +39,9 @@ class RandomHorizontalFlip(object):
     def __init__(self, p=0.5):
         self.p = p
 
-    def __call__(self, img, mask):
+    def __call__(
+        self, img: Image.Image, mask: Image.Image
+    ) -> tuple[Image.Image, Image.Image]:
         """
         Args:
             img (PIL Image): Image to be flipped.
@@ -47,12 +50,12 @@ class RandomHorizontalFlip(object):
             PIL Image: Randomly flipped image.
         """
         if random.random() < self.p:
-            img = TF.hflip(img)
-            mask = TF.hflip(mask)
+            img = TF.hflip(img)  # pyright: ignore
+            mask = TF.hflip(mask)  # pyright: ignore
         return img, mask
 
     def __repr__(self):
-        return self.__class__.__name__ + '(p={})'.format(self.p)
+        return self.__class__.__name__ + "(p={})".format(self.p)
 
 
 class RandomAffine(object):
@@ -84,44 +87,59 @@ class RandomAffine(object):
 
     """
 
-    def __init__(self, degrees, translate=None, scale=None, shear=None, resample=False, fillcolor=0):
-        if isinstance(degrees, numbers.Number):
+    def __init__(
+        self,
+        degrees: list[int | float] | int | float,
+        translate: tuple[int | float, ...] | None = None,
+        scale: tuple[int | float, ...] | None = None,
+        shear: list[int | float] | int | float | None = None,
+        resample: (
+            bool | Literal[Resampling.NEAREST, Resampling.BILINEAR, Resampling.BICUBIC]
+        ) = False,
+        fillcolor: tuple[int, ...] | int = 0,
+    ):
+        if isinstance(degrees, (int, float)):
             if degrees < 0:
                 raise ValueError("If degrees is a single number, it must be positive.")
             self.degrees = (-degrees, degrees)
         else:
-            assert isinstance(degrees, (tuple, list)) and len(degrees) == 2, \
-                "degrees should be a list or tuple and it must be of length 2."
+            assert (
+                isinstance(degrees, (tuple, list)) and len(degrees) == 2
+            ), "degrees should be a list or tuple and it must be of length 2."
             self.degrees = degrees
 
         if translate is not None:
-            assert isinstance(translate, (tuple, list)) and len(translate) == 2, \
-                "translate should be a list or tuple and it must be of length 2."
+            assert (
+                isinstance(translate, (tuple, list)) and len(translate) == 2
+            ), "translate should be a list or tuple and it must be of length 2."
             for t in translate:
                 if not (0.0 <= t <= 1.0):
                     raise ValueError("translation values should be between 0 and 1")
         self.translate = translate
 
         if scale is not None:
-            assert isinstance(scale, (tuple, list)) and len(scale) == 2, \
-                "scale should be a list or tuple and it must be of length 2."
+            assert (
+                isinstance(scale, (tuple, list)) and len(scale) == 2
+            ), "scale should be a list or tuple and it must be of length 2."
             for s in scale:
                 if s <= 0:
                     raise ValueError("scale values should be positive")
         self.scale = scale
 
         if shear is not None:
-            if isinstance(shear, numbers.Number):
+            if isinstance(shear, (int, float)):
                 if shear < 0:
-                    raise ValueError("If shear is a single number, it must be positive.")
+                    raise ValueError(
+                        "If shear is a single number, it must be positive."
+                    )
                 self.shear = (-shear, shear)
             else:
-                assert isinstance(shear, (tuple, list)) and \
-                       (len(shear) == 2 or len(shear) == 4), \
-                    "shear should be a list or tuple and it must be of length 2 or 4."
+                assert isinstance(shear, (tuple, list)) and (
+                    len(shear) == 2 or len(shear) == 4
+                ), "shear should be a list or tuple and it must be of length 2 or 4."
                 # X-Axis shear with [min, max]
                 if len(shear) == 2:
-                    self.shear = [shear[0], shear[1], 0., 0.]
+                    self.shear = [shear[0], shear[1], 0.0, 0.0]
                 elif len(shear) == 4:
                     self.shear = [s for s in shear]
         else:
@@ -141,8 +159,10 @@ class RandomAffine(object):
         if translate is not None:
             max_dx = translate[0] * img_size[0]
             max_dy = translate[1] * img_size[1]
-            translations = (np.round(random.uniform(-max_dx, max_dx)),
-                            np.round(random.uniform(-max_dy, max_dy)))
+            translations = (
+                np.round(random.uniform(-max_dx, max_dx)),
+                np.round(random.uniform(-max_dy, max_dy)),
+            )
         else:
             translations = (0, 0)
 
@@ -151,44 +171,59 @@ class RandomAffine(object):
         else:
             scale = 1.0
 
+        shear: float | Sequence[float] = 0.0
         if shears is not None:
             if len(shears) == 2:
-                shear = [random.uniform(shears[0], shears[1]), 0.]
+                shear = [random.uniform(shears[0], shears[1]), 0.0]
             elif len(shears) == 4:
-                shear = [random.uniform(shears[0], shears[1]),
-                         random.uniform(shears[2], shears[3])]
+                shear = [
+                    random.uniform(shears[0], shears[1]),
+                    random.uniform(shears[2], shears[3]),
+                ]
         else:
             shear = 0.0
 
         return angle, translations, scale, shear
 
-    def __call__(self, img, mask):
+    def __call__(self, img: Image.Image, mask: Image.Image):
         """
             img (PIL Image): Image to be transformed.
 
         Returns:
             PIL Image: Affine transformed image.
         """
-        ret = self.get_params(self.degrees, self.translate, self.scale, self.shear, img.size)
-        img = TF.affine(img, *ret, resample=self.resample, fillcolor=self.fillcolor)
-        mask = TF.affine(mask, *ret, resample=Image.NEAREST, fillcolor=self.fillcolor)
-        return img, mask
+        ret = self.get_params(
+            self.degrees, self.translate, self.scale, self.shear, img.size
+        )
+        img_ret: torch.Tensor = TF.affine(
+            img,  # pyright: ignore[reportArgumentType]
+            *ret,
+            interpolation=self.resample,  # pyright: ignore[reportArgumentType]
+            fill=self.fillcolor  # pyright: ignore[reportArgumentType]
+        )
+        mask_ret: torch.Tensor = TF.affine(
+            mask,  # pyright: ignore[reportArgumentType]
+            *ret,
+            interpolation=Resampling.NEAREST,  # pyright: ignore[reportArgumentType]
+            fill=self.fillcolor  # pyright: ignore[reportArgumentType]
+        )
+        return img_ret, mask_ret
 
     def __repr__(self):
-        s = '{name}(degrees={degrees}'
+        s = "{name}(degrees={degrees}"
         if self.translate is not None:
-            s += ', translate={translate}'
+            s += ", translate={translate}"
         if self.scale is not None:
-            s += ', scale={scale}'
+            s += ", scale={scale}"
         if self.shear is not None:
-            s += ', shear={shear}'
+            s += ", shear={shear}"
         if self.resample > 0:
-            s += ', resample={resample}'
+            s += ", resample={resample}"
         if self.fillcolor != 0:
-            s += ', fillcolor={fillcolor}'
-        s += ')'
+            s += ", fillcolor={fillcolor}"
+        s += ")"
         d = dict(self.__dict__)
-        d['resample'] = _pil_interpolation_to_str[d['resample']]
+        d["resample"] = _pil_interpolation_to_str[d["resample"]]
         return s.format(name=self.__class__.__name__, **d)
 
 
@@ -228,8 +263,10 @@ class RandomCrop(object):
 
     """
 
-    def __init__(self, size, padding=None, pad_if_needed=False, fill=0, padding_mode='constant'):
-        if isinstance(size, numbers.Number):
+    def __init__(
+        self, size, padding=None, pad_if_needed=False, fill=0, padding_mode="constant"
+    ):
+        if isinstance(size, (int, float)):
             self.size = (int(size), int(size))
         else:
             self.size = size
@@ -283,7 +320,9 @@ class RandomCrop(object):
         return img, mask
 
     def __repr__(self):
-        return self.__class__.__name__ + '(size={0}, padding={1})'.format(self.size, self.padding)
+        return self.__class__.__name__ + "(size={0}, padding={1})".format(
+            self.size, self.padding
+        )
 
 
 class RandomResizedCrop(object):
@@ -301,7 +340,13 @@ class RandomResizedCrop(object):
         interpolation: Default: PIL.Image.BILINEAR
     """
 
-    def __init__(self, size, scale=(0.08, 1.0), ratio=(3. / 4., 4. / 3.), interpolation=Image.BILINEAR):
+    def __init__(
+        self,
+        size,
+        scale=(0.08, 1.0),
+        ratio=(3.0 / 4.0, 4.0 / 3.0),
+        interpolation=Resampling.BILINEAR,
+    ):
         if isinstance(size, (tuple, list)):
             self.size = size
         else:
@@ -344,10 +389,10 @@ class RandomResizedCrop(object):
 
         # Fallback to central crop
         in_ratio = float(width) / float(height)
-        if (in_ratio < min(ratio)):
+        if in_ratio < min(ratio):
             w = width
             h = int(round(w / min(ratio)))
-        elif (in_ratio > max(ratio)):
+        elif in_ratio > max(ratio):
             h = height
             w = int(round(h * max(ratio)))
         else:  # whole image
@@ -373,10 +418,10 @@ class RandomResizedCrop(object):
 
     def __repr__(self):
         interpolate_str = _pil_interpolation_to_str[self.interpolation]
-        format_string = self.__class__.__name__ + '(size={0}'.format(self.size)
-        format_string += ', scale={0}'.format(tuple(round(s, 4) for s in self.scale))
-        format_string += ', ratio={0}'.format(tuple(round(r, 4) for r in self.ratio))
-        format_string += ', interpolation={0})'.format(interpolate_str)
+        format_string = self.__class__.__name__ + "(size={0}".format(self.size)
+        format_string += ", scale={0}".format(tuple(round(s, 4) for s in self.scale))
+        format_string += ", ratio={0}".format(tuple(round(r, 4) for r in self.ratio))
+        format_string += ", interpolation={0})".format(interpolate_str)
         return format_string
 
 
@@ -391,7 +436,7 @@ class ToOnehot(object):
         self.max_obj_n = max_obj_n
         self.shuffle = shuffle
 
-    def __call__(self, mask, obj_list=None):
+    def __call__(self, mask, obj_list: list[int] | None = None):
         """
         Args:
             mask (Mask in Numpy): Mask to be converted.
@@ -412,7 +457,7 @@ class ToOnehot(object):
 
             if self.shuffle:
                 random.shuffle(obj_list)
-            obj_list = obj_list[:self.max_obj_n - 1]
+            obj_list = obj_list[: self.max_obj_n - 1]
 
         for i in range(len(obj_list)):
             new_mask[i + 1] = (mask == obj_list[i]).astype(np.uint8)
@@ -421,7 +466,7 @@ class ToOnehot(object):
         return torch.from_numpy(new_mask), obj_list
 
     def __repr__(self):
-        return self.__class__.__name__ + '(max_obj_n={})'.format(self.max_obj_n)
+        return self.__class__.__name__ + "(max_obj_n={})".format(self.max_obj_n)
 
 
 class Resize(torch.nn.Module):
@@ -465,4 +510,6 @@ class Resize(torch.nn.Module):
 
     def __repr__(self):
         interpolate_str = _pil_interpolation_to_str[self.interpolation]
-        return self.__class__.__name__ + '(size={0}, interpolation={1})'.format(self.size, interpolate_str)
+        return self.__class__.__name__ + "(size={0}, interpolation={1})".format(
+            self.size, interpolate_str
+        )

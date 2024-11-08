@@ -1,10 +1,15 @@
+# Standard Library
 import math
+
+# PyTorch
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.nn import functional as NF
 from torchvision.models import resnet50
 
-import myutils
+# Local folders
+from .. import myutils
+from .FeatureBank import FeatureBank
 
 
 class ResBlock(nn.Module):
@@ -15,7 +20,9 @@ class ResBlock(nn.Module):
         if indim == outdim and stride == 1:
             self.downsample = None
         else:
-            self.downsample = nn.Conv2d(indim, outdim, kernel_size=3, padding=1, stride=stride)
+            self.downsample = nn.Conv2d(
+                indim, outdim, kernel_size=3, padding=1, stride=stride
+            )
 
         self.conv1 = nn.Conv2d(indim, outdim, kernel_size=3, padding=1, stride=stride)
         self.conv2 = nn.Conv2d(outdim, outdim, kernel_size=3, padding=1)
@@ -46,10 +53,14 @@ class EncoderM(nn.Module):
         self.res3 = resnet.layer2  # 1/8, 512
         self.res4 = resnet.layer3  # 1/16, 1024
 
-        self.register_buffer('mean', torch.FloatTensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.FloatTensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.register_buffer(
+            "mean", torch.FloatTensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        )
+        self.register_buffer(
+            "std", torch.FloatTensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        )
 
-    def forward(self, in_f, in_m, in_o):
+    def forward(self, in_f: Tensor, in_m: Tensor, in_o: Tensor):
         f = (in_f - self.mean) / self.std
 
         x = self.conv1(f) + self.conv1_m(in_m) + self.conv1_o(in_o)
@@ -76,10 +87,14 @@ class EncoderQ(nn.Module):
         self.res3 = resnet.layer2  # 1/8, 512
         self.res4 = resnet.layer3  # 1/8, 1024
 
-        self.register_buffer('mean', torch.FloatTensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.FloatTensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.register_buffer(
+            "mean", torch.FloatTensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        )
+        self.register_buffer(
+            "std", torch.FloatTensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        )
 
-    def forward(self, in_f):
+    def forward(self, in_f: Tensor) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         f = (in_f - self.mean) / self.std
 
         x = self.conv1(f)
@@ -94,15 +109,18 @@ class EncoderQ(nn.Module):
 
 
 class KeyValue(nn.Module):
-
-    def __init__(self, indim, keydim, valdim):
+    def __init__(self, indim: int, keydim: int, valdim: int):
         super(KeyValue, self).__init__()
         self.keydim = keydim
         self.valdim = valdim
-        self.Key = nn.Conv2d(indim, keydim, kernel_size=(3, 3), padding=(1, 1), stride=1)
-        self.Value = nn.Conv2d(indim, valdim, kernel_size=(3, 3), padding=(1, 1), stride=1)
+        self.Key = nn.Conv2d(
+            indim, keydim, kernel_size=(3, 3), padding=(1, 1), stride=1
+        )
+        self.Value = nn.Conv2d(
+            indim, valdim, kernel_size=(3, 3), padding=(1, 1), stride=1
+        )
 
-    def forward(self, x):
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
         key = self.Key(x)
         key = key.view(*key.shape[:2], -1)  # obj_n, key_dim, pixel_n
 
@@ -112,36 +130,41 @@ class KeyValue(nn.Module):
 
 
 class Refine(nn.Module):
-    def __init__(self, inplanes, planes):
+    def __init__(self, inplanes: int, planes: int):
         super(Refine, self).__init__()
-        self.convFS = nn.Conv2d(inplanes, planes, kernel_size=(3, 3), padding=(1, 1), stride=1)
+        self.convFS = nn.Conv2d(
+            inplanes, planes, kernel_size=(3, 3), padding=(1, 1), stride=1
+        )
         self.ResFS = ResBlock(planes, planes)
         self.ResMM = ResBlock(planes, planes)
         self.scale_factor = 2
 
-    def forward(self, f, pm):
+    def forward(self, f: Tensor, pm: Tensor):
         s = self.ResFS(self.convFS(f))
-        m = s + NF.interpolate(pm, scale_factor=self.scale_factor, mode='bilinear', align_corners=False)
+        m = s + NF.interpolate(
+            pm, scale_factor=self.scale_factor, mode="bilinear", align_corners=False
+        )
         m = self.ResMM(m)
 
         return m
 
 
 class Matcher(nn.Module):
-    def __init__(self, thres_valid=1e-3, update_bank=False):
+    def __init__(self, thres_valid: float = 1e-3, update_bank: bool = False):
         super(Matcher, self).__init__()
         self.thres_valid = thres_valid
         self.update_bank = update_bank
 
-    def forward(self, feature_bank, q_in, q_out):
-
+    def forward(self, feature_bank: FeatureBank, q_in: Tensor, q_out: Tensor) -> Tensor:
         mem_out_list = []
-
         for i in range(0, feature_bank.obj_n):
-            d_key, bank_n = feature_bank.keys[i].size()
-
+            d_key, _bank_n = feature_bank.keys[i].size()
             try:
-                p = torch.matmul(feature_bank.keys[i].transpose(0, 1), q_in) / math.sqrt(d_key)  # THW, HW
+                p = torch.matmul(
+                    feature_bank.keys[i].transpose(0, 1), q_in
+                ) / math.sqrt(
+                    d_key
+                )  # THW, HW
                 p = NF.softmax(p, dim=1)  # bs, bank_n, HW
                 mem = torch.matmul(feature_bank.values[i], p)  # bs, D_o, HW
             except RuntimeError as e:
@@ -150,11 +173,13 @@ class Matcher(nn.Module):
                 value_cpu = feature_bank.values[i].cpu()
                 q_in_cpu = q_in.cpu()
 
-                p = torch.matmul(key_cpu.transpose(0, 1), q_in_cpu) / math.sqrt(d_key)  # THW, HW
+                p = torch.matmul(key_cpu.transpose(0, 1), q_in_cpu) / math.sqrt(
+                    d_key
+                )  # THW, HW
                 p = NF.softmax(p, dim=1)  # bs, bank_n, HW
                 mem = torch.matmul(value_cpu, p).to(device)  # bs, D_o, HW
                 p = p.to(device)
-                print('\tLine 158. GPU out of memory, use CPU', f'p size: {p.shape}')
+                print("\tLine 158. GPU out of memory, use CPU", f"p size: {p.shape}")
 
             mem_out_list.append(torch.cat([mem, q_out], dim=1))
 
@@ -162,24 +187,34 @@ class Matcher(nn.Module):
                 try:
                     ones = torch.ones_like(p)
                     zeros = torch.zeros_like(p)
-                    bank_cnt = torch.where(p > self.thres_valid, ones, zeros).sum(dim=2)[0]
+                    bank_cnt = torch.where(p > self.thres_valid, ones, zeros).sum(
+                        dim=2
+                    )[0]
                 except RuntimeError as e:
                     device = p.device
                     p = p.cpu()
                     ones = torch.ones_like(p)
                     zeros = torch.zeros_like(p)
-                    bank_cnt = torch.where(p > self.thres_valid, ones, zeros).sum(dim=2)[0].to(device)
-                    print('\tLine 170. GPU out of memory, use CPU', f'p size: {p.shape}')
+                    bank_cnt = (
+                        torch.where(p > self.thres_valid, ones, zeros)
+                        .sum(dim=2)[0]
+                        .to(device)
+                    )
+                    print(
+                        "\tLine 170. GPU out of memory, use CPU", f"p size: {p.shape}"
+                    )
 
                 feature_bank.info[i][:, 1] += torch.log(bank_cnt + 1)
 
-        mem_out_tensor = torch.stack(mem_out_list, dim=0).transpose(0, 1)  # bs, obj_n, dim, pixel_n
+        mem_out_tensor = torch.stack(mem_out_list, dim=0).transpose(
+            0, 1
+        )  # bs, obj_n, dim, pixel_n
 
         return mem_out_tensor
 
 
 class Decoder(nn.Module):
-    def __init__(self, device):  # mdim_global = 256
+    def __init__(self, device: torch.device | str):  # mdim_global = 256
         super(Decoder, self).__init__()
 
         self.device = device
@@ -197,21 +232,30 @@ class Decoder(nn.Module):
         # Local
         self.local_avg = nn.AvgPool2d(local_size, stride=1, padding=local_size // 2)
         self.local_max = nn.MaxPool2d(local_size, stride=1, padding=local_size // 2)
-        self.local_convFM = nn.Conv2d(128, mdim_local, kernel_size=3, padding=1, stride=1)
+        self.local_convFM = nn.Conv2d(
+            128, mdim_local, kernel_size=3, padding=1, stride=1
+        )
         self.local_ResMM = ResBlock(mdim_local, mdim_local)
         self.local_pred2 = nn.Conv2d(mdim_local, 2, kernel_size=3, padding=1, stride=1)
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
-    def forward(self, patch_match, r3, r2, r1=None, feature_shape=None):
+    def forward(
+        self,
+        patch_match: Tensor,
+        r3: Tensor,
+        r2: Tensor,
+        r1: Tensor,
+        feature_shape: tuple[int, int, int, int],
+    ):
         p = self.ResMM(self.convFM(patch_match))
         p = self.RF3(r3, p)  # out: 1/8, 256
         p = self.RF2(r2, p)  # out: 1/4, 256
         p = self.pred2(NF.relu(p))
 
-        p = NF.interpolate(p, scale_factor=2, mode='bilinear', align_corners=False)
+        p = NF.interpolate(p, scale_factor=2, mode="bilinear", align_corners=False)
 
         bs, obj_n, h, w = feature_shape
         rough_seg = NF.softmax(p, dim=1)[:, 1]
@@ -225,7 +269,9 @@ class Decoder(nn.Module):
         rough_seg = rough_seg.view(bs * obj_n, 1, h, w)  # bs*obj_n, 1, h, w
         r1_weighted = r1 * rough_seg
         r1_local = self.local_avg(r1_weighted)  # bs*obj_n, 64, h, w
-        r1_local = r1_local / (self.local_avg(rough_seg) + 1e-8)  # neighborhood reference
+        r1_local = r1_local / (
+            self.local_avg(rough_seg) + 1e-8
+        )  # neighborhood reference
         r1_conf = self.local_max(rough_seg)  # bs*obj_n, 1, h, w
 
         local_match = torch.cat([r1, r1_local], dim=1)
@@ -233,14 +279,19 @@ class Decoder(nn.Module):
         q = r1_conf * self.local_pred2(NF.relu(q))
 
         p = p + uncertainty * q
-        p = NF.interpolate(p, scale_factor=2, mode='bilinear', align_corners=False)
+        p = NF.interpolate(p, scale_factor=2, mode="bilinear", align_corners=False)
         p = NF.softmax(p, dim=1)[:, 1]  # no, h, w
 
         return p
 
 
 class AFB_URR(nn.Module):
-    def __init__(self, device, update_bank, load_imagenet_params=False):
+    def __init__(
+        self,
+        device: torch.device | str,
+        update_bank: bool,
+        load_imagenet_params: bool = False,
+    ):
         super(AFB_URR, self).__init__()
 
         self.device = device
@@ -252,56 +303,84 @@ class AFB_URR(nn.Module):
         self.global_matcher = Matcher(update_bank=update_bank)
         self.decoder = Decoder(device)
 
-    def memorize(self, frame, mask):
+    def memorize(
+        self, frame: Tensor, mask: Tensor
+    ) -> tuple[list[Tensor], list[Tensor]]:
+        _, K, _H, _W = mask.shape
 
-        _, K, H, W = mask.shape
-
-        (frame, mask), pad = myutils.pad_divide_by([frame, mask], 16, (frame.size()[2], frame.size()[3]))
+        (frame, mask), _pad = myutils.pad_divide_by(
+            [frame, mask], 16, (frame.size()[2], frame.size()[3])
+        )
 
         frame = frame.expand(K, -1, -1, -1)  # obj_n, 3, h, w
         mask = mask[0].unsqueeze(1).float()
         mask_ones = torch.ones_like(mask)
         mask_inv = (mask_ones - mask).clamp(0, 1)
 
-        r4, r1 = self.encoder_m(frame, mask, mask_inv)
+        embeddings: tuple[Tensor, Tensor] = self.encoder_m(frame, mask, mask_inv)
+        r4, _r1 = embeddings
 
-        k4, v4 = self.keyval_r4(r4)  # num_objects, 128 and 512, H/16, W/16
+        keyval: tuple[Tensor, Tensor] = self.keyval_r4(r4)
+        k4, v4 = keyval  # num_objects, 128 and 512, H/16, W/16
         k4_list = [k4[i] for i in range(K)]
         v4_list = [v4[i] for i in range(K)]
 
         return k4_list, v4_list
 
-    def segment(self, frame, fb_global):
-
+    def segment(
+        self, frame: Tensor, fb_global: FeatureBank
+    ) -> tuple[Tensor, Tensor | None]:
         obj_n = fb_global.obj_n
-
+        pad: tuple[int, int, int, int] | None = None
         if not self.training:
-            [frame], pad = myutils.pad_divide_by([frame], 16, (frame.size()[2], frame.size()[3]))
+            [frame], pad = myutils.pad_divide_by(
+                [frame], 16, (frame.size()[2], frame.size()[3])
+            )
 
-        r4, r3, r2, r1 = self.encoder_q(frame)
+        embeddings: tuple[Tensor, Tensor, Tensor, Tensor] = self.encoder_q(frame)
+        r4, r3, r2, r1 = embeddings
         bs, _, global_match_h, global_match_w = r4.shape
-        _, _, local_match_h, local_match_w = r1.shape
+        _, _, _local_match_h, _local_match_w = r1.shape
 
         k4, v4 = self.keyval_r4(r4)  # 1, dim, H/16, W/16
-        res_global = self.global_matcher(fb_global, k4, v4)
-        res_global = res_global.reshape(bs * obj_n, v4.shape[1] * 2, global_match_h, global_match_w)
+        res_global: Tensor = self.global_matcher(fb_global, k4, v4)
+        res_global = res_global.reshape(
+            bs * obj_n, v4.shape[1] * 2, global_match_h, global_match_w
+        )
 
         r3_size = r3.shape
         r2_size = r2.shape
-        r3 = r3.unsqueeze(1).expand(-1, obj_n, -1, -1, -1).reshape(bs * obj_n, *r3_size[1:])
-        r2 = r2.unsqueeze(1).expand(-1, obj_n, -1, -1, -1).reshape(bs * obj_n, *r2_size[1:])
+        r3 = (
+            r3.unsqueeze(1)
+            .expand(-1, obj_n, -1, -1, -1)
+            .reshape(bs * obj_n, *r3_size[1:])
+        )
+        r2 = (
+            r2.unsqueeze(1)
+            .expand(-1, obj_n, -1, -1, -1)
+            .reshape(bs * obj_n, *r2_size[1:])
+        )
 
         r1_size = r1.shape
-        r1 = r1.unsqueeze(1).expand(-1, obj_n, -1, -1, -1).reshape(bs * obj_n, *r1_size[1:])
+        r1 = (
+            r1.unsqueeze(1)
+            .expand(-1, obj_n, -1, -1, -1)
+            .reshape(bs * obj_n, *r1_size[1:])
+        )
         feature_size = (bs, obj_n, r1_size[2], r1_size[3])
         score = self.decoder(res_global, r3, r2, r1, feature_size)
 
         score = score.view(bs, obj_n, *frame.shape[-2:])
 
+        uncertainty: Tensor | None
         if self.training:
             uncertainty = myutils.calc_uncertainty(NF.softmax(score, dim=1))
-            uncertainty = uncertainty.view(bs, -1).norm(p=2, dim=1) / math.sqrt(frame.shape[-2] * frame.shape[-1])  # [B,1,H,W]
-            uncertainty = uncertainty.mean()
+            uncertainty = uncertainty.view(bs, -1).norm(p=2, dim=1) / math.sqrt(
+                frame.shape[-2] * frame.shape[-1]
+            )  # [B,1,H,W]
+            uncertainty = (
+                uncertainty.mean()  # pyright: ignore[reportOptionalMemberAccess]
+            )
         else:
             uncertainty = None
 
@@ -309,10 +388,11 @@ class AFB_URR(nn.Module):
         score = torch.log((score / (1 - score)))
 
         if not self.training:
+            assert isinstance(pad, tuple)
             if pad[2] + pad[3] > 0:
-                score = score[:, :, pad[2]:-pad[3], :]
+                score = score[:, :, pad[2] : -pad[3], :]
             if pad[0] + pad[1] > 0:
-                score = score[:, :, :, pad[0]:-pad[1]]
+                score = score[:, :, :, pad[0] : -pad[1]]
 
         return score, uncertainty
 

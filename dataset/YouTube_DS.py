@@ -1,37 +1,43 @@
+import json
 import os
 import random
-import json
-import numpy as np
 from glob import glob
 from itertools import compress
 
+import numpy as np
 import torch
-from torch.utils import data
 import torchvision.transforms as TF
+from torch.utils import data
 
-from dataset import transforms as mytrans
-import myutils
+from .. import myutils
+from ..dataset import transforms as mytrans
 
 
 class YouTube_Train_DS(data.Dataset):
 
-    def __init__(self, root, output_size, dataset_file='meta.json', clip_n=3, max_obj_n=11):
+    def __init__(
+        self, root, output_size, dataset_file="meta.json", clip_n=3, max_obj_n=11
+    ):
         self.root = root
         self.clip_n = clip_n
         self.output_size = output_size
         self.max_obj_n = max_obj_n
 
         dataset_path = os.path.join(root, dataset_file)
-        with open(dataset_path, 'r') as json_file:
+        with open(dataset_path, "r") as json_file:
             meta_data = json.load(json_file)
 
-        self.dataset_list = list(meta_data['videos'])
+        self.dataset_list = list(meta_data["videos"])
         self.dataset_size = len(self.dataset_list)
 
         self.random_horizontal_flip = mytrans.RandomHorizontalFlip(0.3)
         self.color_jitter = TF.ColorJitter(0.1, 0.1, 0.1, 0.02)
-        self.random_affine = mytrans.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.95, 1.05), shear=10)
-        self.random_resize_crop = mytrans.RandomResizedCrop(output_size, (0.3, 0.5), (0.95, 1.05))
+        self.random_affine = mytrans.RandomAffine(
+            degrees=15, translate=(0.1, 0.1), scale=(0.95, 1.05), shear=10
+        )
+        self.random_resize_crop = mytrans.RandomResizedCrop(
+            output_size, (0.3, 0.5), (0.95, 1.05)
+        )
         self.to_tensor = TF.ToTensor()
         self.to_onehot = mytrans.ToOnehot(max_obj_n, shuffle=True)
 
@@ -41,22 +47,27 @@ class YouTube_Train_DS(data.Dataset):
     def __getitem__(self, idx):
 
         video_name = self.dataset_list[idx]
-        img_dir = os.path.join(self.root, 'JPEGImages', video_name)
-        mask_dir = os.path.join(self.root, 'Annotations', video_name)
+        img_dir = os.path.join(self.root, "JPEGImages", video_name)
+        mask_dir = os.path.join(self.root, "Annotations", video_name)
 
-        img_list = sorted(glob(os.path.join(img_dir, '*.jpg')))
-        mask_list = sorted(glob(os.path.join(mask_dir, '*.png')))
+        img_list = sorted(glob(os.path.join(img_dir, "*.jpg")))
+        mask_list = sorted(glob(os.path.join(mask_dir, "*.png")))
 
         idx_list = list(range(len(img_list)))
         random.shuffle(idx_list)
-        idx_list = idx_list[:self.clip_n]
+        idx_list = idx_list[: self.clip_n]
 
-        frames = torch.zeros((self.clip_n, 3, self.output_size, self.output_size), dtype=torch.float)
-        masks = torch.zeros((self.clip_n, self.max_obj_n, self.output_size, self.output_size), dtype=torch.float)
+        frames = torch.zeros(
+            (self.clip_n, 3, self.output_size, self.output_size), dtype=torch.float
+        )
+        masks = torch.zeros(
+            (self.clip_n, self.max_obj_n, self.output_size, self.output_size),
+            dtype=torch.float,
+        )
 
         for i, frame_idx in enumerate(idx_list):
-            img = myutils.load_image_in_PIL(img_list[frame_idx], 'RGB')
-            mask = myutils.load_image_in_PIL(mask_list[frame_idx], 'P')
+            img = myutils.load_image_in_PIL(img_list[frame_idx], "RGB")
+            mask = myutils.load_image_in_PIL(mask_list[frame_idx], "P")
 
             if i > 0:
                 img = self.color_jitter(img)
@@ -81,26 +92,25 @@ class YouTube_Train_DS(data.Dataset):
             frames[i] = self.to_tensor(img_roi)
             masks[i] = mask_roi
 
-        info = {
-            'name': video_name,
-            'idx_list': idx_list
-        }
+        info = {"name": video_name, "idx_list": idx_list}
 
         return frames, masks[:, :obj_n], obj_n, info
 
 
 class YouTube_Test_DS(data.Dataset):
 
-    def __init__(self, root, dataset_file='meta.json', output_size=(495, 880), max_obj_n=11):
+    def __init__(
+        self, root, dataset_file="meta.json", output_size=(495, 880), max_obj_n=11
+    ):
         self.root = root
         self.max_obj_n = max_obj_n
         self.out_h, self.out_w = output_size
 
         dataset_path = os.path.join(root, dataset_file)
-        with open(dataset_path, 'r') as json_file:
+        with open(dataset_path, "r") as json_file:
             self.meta_data = json.load(json_file)
 
-        self.dataset_list = list(self.meta_data['videos'])
+        self.dataset_list = list(self.meta_data["videos"])
         self.dataset_size = len(self.dataset_list)
 
         self.to_tensor = TF.ToTensor()
@@ -113,21 +123,21 @@ class YouTube_Test_DS(data.Dataset):
 
         video_name = self.dataset_list[idx]
 
-        img_dir = os.path.join(self.root, 'JPEGImages', video_name)
-        mask_dir = os.path.join(self.root, 'Annotations', video_name)
+        img_dir = os.path.join(self.root, "JPEGImages", video_name)
+        mask_dir = os.path.join(self.root, "Annotations", video_name)
 
-        img_list = sorted(glob(os.path.join(img_dir, '*.jpg')))
+        img_list = sorted(glob(os.path.join(img_dir, "*.jpg")))
         basename_list = [os.path.basename(x)[:-4] for x in img_list]
         video_len = len(img_list)
         selected_idx = np.ones(video_len, np.bool)
 
-        objs = self.meta_data['videos'][video_name]['objects']
+        objs = self.meta_data["videos"][video_name]["objects"]
         obj_n = 1
         video_obj_appear_st_idx = video_len
 
         for obj_idx, obj_gt in objs.items():
             obj_n = max(obj_n, int(obj_idx) + 1)
-            video_obj_appear_idx = basename_list.index(obj_gt['frames'][0])
+            video_obj_appear_idx = basename_list.index(obj_gt["frames"][0])
             video_obj_appear_st_idx = min(video_obj_appear_st_idx, video_obj_appear_idx)
 
         selected_idx[:video_obj_appear_st_idx] = False
@@ -141,7 +151,7 @@ class YouTube_Test_DS(data.Dataset):
         obj_vis[:, 0] = 1
         obj_st = np.zeros(obj_n, np.uint8)
 
-        tmp_img = myutils.load_image_in_PIL(img_list[0], 'RGB')
+        tmp_img = myutils.load_image_in_PIL(img_list[0], "RGB")
         original_w, original_h = tmp_img.size
         if original_h < self.out_h:
             out_h, out_w = original_h, original_w
@@ -153,14 +163,14 @@ class YouTube_Test_DS(data.Dataset):
         basename_to_save = list()
         for obj_idx, obj_gt in objs.items():
             obj_idx = int(obj_idx)
-            basename_to_save += obj_gt['frames']
+            basename_to_save += obj_gt["frames"]
 
-            frame_idx = basename_list.index(obj_gt['frames'][0])
+            frame_idx = basename_list.index(obj_gt["frames"][0])
             obj_st[obj_idx] = frame_idx
             obj_vis[frame_idx:, obj_idx] = 1
 
-            mask_path = os.path.join(mask_dir, obj_gt['frames'][0] + '.png')
-            mask_raw = myutils.load_image_in_PIL(mask_path, 'P')
+            mask_path = os.path.join(mask_dir, obj_gt["frames"][0] + ".png")
+            mask_raw = myutils.load_image_in_PIL(mask_path, "P")
             mask_raw = mask_raw.resize((out_w, out_h))
             mask_raw = torch.from_numpy(np.array(mask_raw, np.uint8))
 
@@ -170,22 +180,22 @@ class YouTube_Test_DS(data.Dataset):
 
         frames = torch.zeros((video_len, 3, out_h, out_w), dtype=torch.float)
         for i in range(video_len):
-            img = myutils.load_image_in_PIL(img_list[i], 'RGB')
+            img = myutils.load_image_in_PIL(img_list[i], "RGB")
             img = img.resize((out_w, out_h))
             frames[i] = self.to_tensor(img)
 
         info = {
-            'name': video_name,
-            'num_frames': video_len,
-            'obj_vis': obj_vis,
-            'obj_st': obj_st,
-            'basename_list': basename_list,
-            'basename_to_save': basename_to_save,
-            'original_size': (original_h, original_w)
+            "name": video_name,
+            "num_frames": video_len,
+            "obj_vis": obj_vis,
+            "obj_st": obj_st,
+            "basename_list": basename_list,
+            "basename_to_save": basename_to_save,
+            "original_size": (original_h, original_w),
         }
 
         return frames, masks, obj_n, info
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pass
